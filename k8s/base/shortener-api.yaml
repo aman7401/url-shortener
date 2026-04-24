@@ -1,0 +1,69 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: shortener-api
+  namespace: url-shortener
+spec:
+  replicas: 3                         # 3 pods running in parallel
+  selector:
+    matchLabels:
+      app: shortener-api
+  strategy:
+    type: RollingUpdate               # Zero-downtime deploys
+    rollingUpdate:
+      maxSurge: 1                     # Allow 1 extra pod during update
+      maxUnavailable: 0               # Never go below 3 healthy pods
+  template:
+    metadata:
+      labels:
+        app: shortener-api
+    spec:
+      containers:
+        - name: shortener-api
+          image: minikube/shortener-api:latest   # add :latest
+          imagePullPolicy: Never   # use local image only
+          ports:
+            - containerPort: 8000
+          envFrom:
+            - configMapRef:
+                name: app-config
+          env:
+            - name: DB_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: app-secret
+                  key: DB_PASS
+          # Readiness probe: don't send traffic until /health returns 200
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          # Liveness probe: restart pod if it becomes unresponsive
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          resources:
+            requests:
+              cpu: "100m"             # 0.1 CPU core (used by HPA)
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "256Mi"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: shortener-api-service
+  namespace: url-shortener
+spec:
+  selector:
+    app: shortener-api
+  ports:
+    - port: 80
+      targetPort: 8000
+  type: ClusterIP
