@@ -3,6 +3,7 @@ package com.shortener.service;
 import com.shortener.dto.ShortenRequest;
 import com.shortener.dto.ShortenResponse;
 import com.shortener.model.Url;
+import com.shortener.repository.SequenceRepository;
 import com.shortener.repository.UrlRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -24,6 +25,7 @@ import static org.mockito.Mockito.*;
 class UrlServiceTest {
 
     @Mock private UrlRepository urlRepository;
+    @Mock private SequenceRepository sequenceRepository;
     @Mock private RedisTemplate<String, String> redisTemplate;
     @Mock private AnalyticsService analyticsService;
     @Mock private ValueOperations<String, String> valueOps;
@@ -36,45 +38,60 @@ class UrlServiceTest {
     }
 
     @Test
-    void shorten_savesUrlAndReturnsShortCode() {
+    void shorten_usesSequenceAndBase62Encoding() {
+        when(sequenceRepository.nextValue()).thenReturn(1L);
+        when(urlRepository.save(any(Url.class))).thenAnswer(inv -> inv.getArgument(0));
+
         ShortenRequest request = new ShortenRequest();
         request.setUrl("https://google.com");
 
-        when(urlRepository.save(any(Url.class))).thenAnswer(inv -> inv.getArgument(0));
-
         ShortenResponse response = urlService.shorten(request);
 
-        assertThat(response.getShortCode()).hasSize(6);
-        assertThat(response.getShortUrl()).startsWith("/r/");
+        assertThat(response.getShortCode()).isEqualTo("1");
+        assertThat(response.getShortUrl()).isEqualTo("/r/1");
+        verify(sequenceRepository).nextValue();
         verify(urlRepository).save(any(Url.class));
-        verify(valueOps).set(anyString(), eq("https://google.com"), any());
+    }
+
+    @Test
+    void shorten_differentSequencesProduceDifferentCodes() {
+        when(sequenceRepository.nextValue()).thenReturn(1L).thenReturn(2L);
+        when(urlRepository.save(any(Url.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        ShortenRequest request = new ShortenRequest();
+        request.setUrl("https://google.com");
+
+        ShortenResponse first = urlService.shorten(request);
+        ShortenResponse second = urlService.shorten(request);
+
+        assertThat(first.getShortCode()).isNotEqualTo(second.getShortCode());
     }
 
     @Test
     void resolve_returnsUrlFromCache_whenCacheHit() {
-        when(valueOps.get("abc123")).thenReturn("https://google.com");
+        when(valueOps.get("1")).thenReturn("https://google.com");
 
-        String result = urlService.resolve("abc123");
+        String result = urlService.resolve("1");
 
         assertThat(result).isEqualTo("https://google.com");
         verify(urlRepository, never()).findById(any());
-        verify(analyticsService).recordClick("abc123");
+        verify(analyticsService).recordClick("1");
     }
 
     @Test
     void resolve_queriesDb_whenCacheMiss() {
-        when(valueOps.get("abc123")).thenReturn(null);
+        when(valueOps.get("1")).thenReturn(null);
 
         Url url = new Url();
-        url.setCode("abc123");
+        url.setCode("1");
         url.setOriginalUrl("https://google.com");
-        when(urlRepository.findById("abc123")).thenReturn(Optional.of(url));
+        when(urlRepository.findById("1")).thenReturn(Optional.of(url));
 
-        String result = urlService.resolve("abc123");
+        String result = urlService.resolve("1");
 
         assertThat(result).isEqualTo("https://google.com");
-        verify(urlRepository).findById("abc123");
-        verify(analyticsService).recordClick("abc123");
+        verify(urlRepository).findById("1");
+        verify(analyticsService).recordClick("1");
     }
 
     @Test

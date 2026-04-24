@@ -3,37 +3,40 @@ package com.shortener.service;
 import com.shortener.dto.ShortenRequest;
 import com.shortener.dto.ShortenResponse;
 import com.shortener.model.Url;
+import com.shortener.repository.SequenceRepository;
 import com.shortener.repository.UrlRepository;
+import com.shortener.util.Base62Encoder;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.web.server.ResponseStatusException;
 
-import java.security.SecureRandom;
 import java.time.Duration;
 
 @Service
 public class UrlService {
 
-    private static final String CHARACTERS = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
-    private static final int CODE_LENGTH = 6;
     private static final Duration CACHE_TTL = Duration.ofHours(1);
 
     private final UrlRepository urlRepository;
+    private final SequenceRepository sequenceRepository;
     private final RedisTemplate<String, String> redisTemplate;
     private final AnalyticsService analyticsService;
-    private final SecureRandom random = new SecureRandom();
 
     public UrlService(UrlRepository urlRepository,
+                      SequenceRepository sequenceRepository,
                       RedisTemplate<String, String> redisTemplate,
                       AnalyticsService analyticsService) {
         this.urlRepository = urlRepository;
+        this.sequenceRepository = sequenceRepository;
         this.redisTemplate = redisTemplate;
         this.analyticsService = analyticsService;
     }
 
     public ShortenResponse shorten(ShortenRequest request) {
-        String code = generateCode();
+        long sequence = sequenceRepository.nextValue();
+        String code = Base62Encoder.encode(sequence);
+
         Url url = new Url();
         url.setCode(code);
         url.setOriginalUrl(request.getUrl());
@@ -57,13 +60,5 @@ public class UrlService {
         redisTemplate.opsForValue().set(code, url.getOriginalUrl(), CACHE_TTL);
         analyticsService.recordClick(code);
         return url.getOriginalUrl();
-    }
-
-    private String generateCode() {
-        StringBuilder sb = new StringBuilder(CODE_LENGTH);
-        for (int i = 0; i < CODE_LENGTH; i++) {
-            sb.append(CHARACTERS.charAt(random.nextInt(CHARACTERS.length())));
-        }
-        return sb.toString();
     }
 }
